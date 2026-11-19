@@ -1,0 +1,22 @@
+﻿# Competition data (CC BY-NC 4.0, must not be redistributed) and large artifacts
+data/
+*.parquet
+*.csv
+!sample_submission.csv.example
+*.npz
+*.npy
+*.pt
+*.ckpt
+*.pkl
+
+# Credentials and local config
+.kaggle/
+kaggle.json
+access_token
+.env
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+.ipynb_checkpoints/
