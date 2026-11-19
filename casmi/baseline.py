@@ -45,6 +45,10 @@ class Params:
     n_anchors: int = 100
     min_sim: float = 0.1
     power: float = 3.0
+    # Candidates that have visible library spectra in this ion mode are known structures: if they were the
+    # answer their own spectra should match. Their analog score is multiplied by this (1.0 = v1 behaviour);
+    # their own-spectrum score sim**power is never penalised.
+    spec_penalty: float = 1.0
 
 
 class BaselineRanker:
@@ -63,18 +67,20 @@ class BaselineRanker:
         self.pool_n = pool.fps.sum(axis=1).astype(np.float32)
 
     # ---- spectral similarity ------------------------------------------------------------------
-    def anchor_scores(self, q: Query, ex: Exclusion) -> dict[int, float]:
+    def anchor_scores(self, q: Query, ex: Exclusion) -> tuple[dict[int, float], np.ndarray]:
+        """Returns ({struct_id: similarity}, sorted struct ids that have any visible spectra in the window)."""
         p = self.p
         b0, b1 = self.block[q.mode]
         nm = self.nmass[b0:b1]
         a = b0 + int(np.searchsorted(nm, q.neutral_mass - p.analog_window))
         b = b0 + int(np.searchsorted(nm, q.neutral_mass + p.analog_window, side="right"))
         if b <= a:
-            return {}
+            return {}, np.zeros(0, dtype=np.int64)
         st = self.struct[a:b]
         bad = np.isin(st, ex.lib_struct_ids) if ex.lib_struct_ids.size else np.zeros(st.size, dtype=bool)
         if ex.truth_id is not None and ex.truth_libs:
             bad |= (st == ex.truth_id) & np.isin(self.libname[a:b], ex.truth_libs)
+        visible = np.unique(st[~bad])
         sim_pk = (self.lib.pk[a:b] @ q.pk.T).toarray()
         sim_nl = (self.lib.nl[a:b] @ q.nl.T).toarray()
         sim = np.maximum(sim_pk, sim_nl)
@@ -93,7 +99,7 @@ class BaselineRanker:
             uid, first = np.unique(st[top], return_index=True)
             for u, f in zip(uid, first):
                 acc[int(u)] = acc.get(int(u), 0.0) + float(col[top[f]])
-        return {u: s / nq for u, s in acc.items()}
+        return {u: s / nq for u, s in acc.items()}, visible
 
     # ---- candidates -----------------------------------------------------------------------------
     def candidates(self, mass: float, ex: Exclusion) -> np.ndarray:
@@ -119,7 +125,7 @@ class BaselineRanker:
     # ---- ranking ---------------------------------------------------------------------------------
     def rank(self, q: Query, ex: Exclusion | None = None, k: int = 25) -> tuple[list[str], dict]:
         ex = ex or Exclusion()
-        scores = self.anchor_scores(q, ex)
+        scores, visible = self.anchor_scores(q, ex)
         cand = self.candidates(q.neutral_mass, ex)
         diag = {"n_cand": int(cand.size), "n_anchor": len(scores),
                 "best_sim": max(scores.values()) if scores else 0.0}
@@ -127,13 +133,19 @@ class BaselineRanker:
             return [], diag
         mdiff = np.abs(self.pool_mass[cand] - q.neutral_mass)
         final = -mdiff * 1e-6  # tie-break: closest mass first
+        has_spec = np.isin(cand, visible)
         if scores:
             top = sorted(scores.items(), key=lambda kv: -kv[1])[: self.p.n_anchors]
             a_ids = np.array([u for u, _ in top])
             a_w = np.array([s for _, s in top], dtype=np.float32) ** self.p.power
             T = self.tanimoto(cand, a_ids)
             weighted = T * a_w[None, :]
-            final = weighted.max(axis=1) + 1e-3 * weighted.sum(axis=1) + final
+            analog = weighted.max(axis=1) + 1e-3 * weighted.sum(axis=1)
+            own = np.array([scores.get(int(c), 0.0) for c in cand], dtype=np.float32) ** self.p.power
+            analog = np.where(has_spec, np.maximum(own, self.p.spec_penalty * analog), analog)
+            final = analog + final
+        if self.p.spec_penalty < 1.0:  # with no evidence at all, still prefer structures without spectra
+            final = final - has_spec * 1e-4
         order = np.argsort(-final)
         out, seen = [], set()
         for i in order[: k * 4]:

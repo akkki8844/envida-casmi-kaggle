@@ -65,7 +65,11 @@ def make_items(lib: Library, pool: Pool, n_per_class: int, seed: int = 0, nn_thr
         if cls == 1:
             ex = Exclusion(truth_id=sid, truth_libs=TIMSTOF_LIBS)
         elif cls == 2:
-            ex = Exclusion(lib_struct_ids=np.array([sid]))
+            # A real class-2 molecule has no public spectra, so it is never a train structure; it is reachable
+            # only through an external database. Keep it in the pool only if the pool's external part has it.
+            in_db = bool(pool.df["in_db"].iat[sid]) if "in_db" in pool.df else False
+            ex = Exclusion(lib_struct_ids=np.array([sid]),
+                           pool_ids=np.zeros(0, dtype=np.int64) if in_db else np.array([sid]))
         else:
             nb = np.flatnonzero(_tanimoto_to_all(pool, pool_n, sid) >= nn_thresh)
             nb = np.union1d(nb, [sid])
@@ -80,7 +84,9 @@ def make_items(lib: Library, pool: Pool, n_per_class: int, seed: int = 0, nn_thr
         items.append(Item(panel, cls, sid, rows, ex))
 
     # panel np
-    np_structs = np.array(sorted(s for s, l in libs_of.items() if "enveda-np-examples" in l))
+    keys = pool.df["inchikey14"].to_numpy()
+    by_key = lambda s: keys[s]  # noqa: E731  (order independent of pool indexing -> same queries for any pool)
+    np_structs = np.array(sorted((s for s, l in libs_of.items() if "enveda-np-examples" in l), key=by_key))
     rng.shuffle(np_structs)
     with_public = [s for s in np_structs if libs_of[s] - set(TIMSTOF_LIBS)]
     c1 = with_public[:n_per_class]
@@ -93,7 +99,7 @@ def make_items(lib: Library, pool: Pool, n_per_class: int, seed: int = 0, nn_thr
     for s in rest[half:][:n_per_class]:
         add("np", 3, s, "enveda-np-examples")
     # panel e180
-    e_structs = np.array(sorted(s for s, l in libs_of.items() if "enveda-180" in l))
+    e_structs = np.array(sorted((s for s, l in libs_of.items() if "enveda-180" in l), key=by_key))
     rng.shuffle(e_structs)
     for s in e_structs[:n_per_class]:
         add("e180", 2, s, "enveda-180")
@@ -122,7 +128,8 @@ def evaluate(ranker: BaselineRanker, lib: Library, pool: Pool, items: list[Item]
         rows.append({
             "panel": it.panel, "cls": it.cls, "struct_id": it.struct_id,
             "n_spectra": len(it.rows), "rr": reciprocal_rank(guesses, tk),
-            "truth_in_window": in_window, **diag,
+            "truth_in_window": in_window,
+            "in_db": bool(pool.df["in_db"].iat[it.struct_id]) if "in_db" in pool.df else False, **diag,
         })
     return pd.DataFrame(rows)
 
@@ -133,6 +140,8 @@ def summarise(df: pd.DataFrame, mix: dict[int, float] = DEFAULT_MIX, n_boot: int
     g = df.groupby(["panel", "cls"])
     tab = g.agg(n=("rr", "size"), mrr=("rr", "mean"), top1=("rr", lambda s: (s == 1.0).mean()),
                 window=("truth_in_window", "mean"), cand=("n_cand", "median"), best_sim=("best_sim", "median"))
+    if "in_db" in df:
+        tab["in_db"] = g["in_db"].mean()
     lines.append(tab.round(3).to_string())
     for panel, d in df.groupby("panel"):
         per = {c: x["rr"].to_numpy() for c, x in d.groupby("cls")}

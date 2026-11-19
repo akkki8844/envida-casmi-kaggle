@@ -22,18 +22,29 @@ ap.add_argument("--wheels", default="data/kaggle_ds/wheels")
 ap.add_argument("--dataset-version", default="v1", help="code dataset slug suffix to attach")
 ap.add_argument("--power", type=float, default=3.0)
 ap.add_argument("--ppm", type=float, default=10.0)
+ap.add_argument("--spec-penalty", type=float, default=1.0)
+ap.add_argument("--coconut", default="", help="local COCONUT pool parquet: shipped as a dataset, used as extra pool")
 a = ap.parse_args()
 
 ds_slug = f"envida-casmi-{a.dataset_version}-code"
 wh_slug = "envida-rdkit-2026-3-3-wheels"
+cn_slug = "envida-coconut-2026-11-pool"
 kn_slug = f"envida-casmi-{a.version}"
 build = ROOT / "build"
-ds, wh, kn = build / "kaggle_dataset", build / "kaggle_wheels", build / "kaggle_kernel"
-for d in (ds, wh, kn):
+ds, wh, kn, cn = build / "kaggle_dataset", build / "kaggle_wheels", build / "kaggle_kernel", build / "kaggle_coconut"
+for d in (ds, wh, kn, cn):
     shutil.rmtree(d, ignore_errors=True)
 (ds / "casmi").mkdir(parents=True)
 wh.mkdir(parents=True)
 kn.mkdir(parents=True)
+if a.coconut:
+    cn.mkdir(parents=True)
+    shutil.copy(ROOT / a.coconut, cn / "coconut_pool.parquet")
+    (cn / "dataset-metadata.json").write_text(json.dumps({
+        "title": "envida coconut 2026-11 pool",
+        "id": f"{a.user}/{cn_slug}",
+        "licenses": [{"name": "CC0-1.0"}],
+    }, indent=2))
 
 for f in (ROOT / "casmi").glob("*.py"):
     shutil.copy(f, ds / "casmi" / f.name)
@@ -92,7 +103,9 @@ print(code_dirs[0], train_path, test_path, sep="\n")''',
 from casmi.library import build_library, build_pool, load_train_meta
 cache = Path("/tmp/casmi_cache")
 meta = load_train_meta(Path(train_path))
-pool = build_pool(meta, cache)
+extra = glob.glob("/kaggle/input/**/coconut_pool.parquet", recursive=True) if USE_COCONUT else []
+print("extra pool:", extra)
+pool = build_pool(meta, cache, extra=Path(extra[0]) if extra else None)
 lib = build_library(Path(train_path), meta, pool, cache)
 del meta
 print(f"pool {len(pool.df):,}  library {len(lib.meta):,}  elapsed {time.time()-T0:.0f}s")''',
@@ -100,7 +113,7 @@ print(f"pool {len(pool.df):,}  library {len(lib.meta):,}  elapsed {time.time()-T
     r'''import pandas as pd
 from casmi.baseline import BaselineRanker, Params
 from casmi.predict import predict
-ranker = BaselineRanker(lib, pool, Params(power=POWER, ppm=PPM))
+ranker = BaselineRanker(lib, pool, Params(power=POWER, ppm=PPM, spec_penalty=SPEC_PENALTY))
 test = pd.read_parquet(test_path)
 print(f"test: {len(test)} spectra, {test.molecule_id.nunique()} molecules")
 sub = predict(test, ranker)
@@ -108,7 +121,8 @@ sub.to_csv("/kaggle/working/submission.csv", index=False)
 print(sub.head(3))
 print(f"total elapsed {time.time()-T0:.0f}s")''',
 ]
-CELLS[0] = f"POWER, PPM = {a.power}, {a.ppm}\n" + CELLS[0]
+CELLS[0] = (f"POWER, PPM, SPEC_PENALTY = {a.power}, {a.ppm}, {a.spec_penalty}\n"
+            f"USE_COCONUT = {bool(a.coconut)}\n") + CELLS[0]
 nb = {
     "cells": [{"cell_type": "code", "execution_count": None, "metadata": {}, "outputs": [],
                "source": c.splitlines(keepends=True)} for c in CELLS],
@@ -126,7 +140,7 @@ nb = {
     "is_private": True,
     "enable_gpu": False,
     "enable_internet": False,
-    "dataset_sources": [f"{a.user}/{ds_slug}", f"{a.user}/{wh_slug}"],
+    "dataset_sources": [f"{a.user}/{ds_slug}", f"{a.user}/{wh_slug}"] + ([f"{a.user}/{cn_slug}"] if a.coconut else []),
     "competition_sources": [COMP],
     "kernel_sources": [],
 }, indent=2))

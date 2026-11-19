@@ -47,11 +47,52 @@ def load_train_meta(path: Path) -> pd.DataFrame:
     return df
 
 
-def build_pool(meta: pd.DataFrame, cache: Path) -> Pool:
+def _make_pool(df: pd.DataFrame, fps: np.ndarray) -> Pool:
+    for col, default in (("in_train", True), ("in_db", False)):
+        if col not in df:
+            df[col] = default
+    return Pool(df, fps, {k: i for i, k in enumerate(df["inchikey14"])})
+
+
+def build_pool(meta: pd.DataFrame, cache: Path, extra: Path | None = None) -> Pool:
+    """Candidate pool = train structures, optionally unioned with an external table
+    (inchikey14, smiles, mass[, np_likeness]) such as COCONUT. `in_db` marks structures present in the
+    external table, `in_train` those with training spectra."""
+    base = _train_pool(meta, cache)
+    if extra is None:
+        return base
+    f_df, f_fp = cache / f"pool_{Path(extra).stem}.parquet", cache / f"pool_{Path(extra).stem}_fps.npy"
+    if f_df.exists() and f_fp.exists():
+        return _make_pool(pd.read_parquet(f_df), np.load(f_fp))
+    ext = pd.read_parquet(extra)
+    ext = ext[ext["inchikey14"].notna()].drop_duplicates("inchikey14")
+    bdf = base.df.copy()
+    bdf["in_train"], bdf["in_db"] = True, bdf["inchikey14"].isin(set(ext["inchikey14"]))
+    bdf["src"] = np.arange(len(bdf))
+    new = ext[~ext["inchikey14"].isin(base.key_to_id)].copy()
+    new["in_train"], new["in_db"], new["src"] = False, True, -1
+    cols = ["inchikey14", "smiles", "mass", "in_train", "in_db", "src"]
+    df = pd.concat([bdf[cols], new[cols]], ignore_index=True)
+    df = df.sort_values("mass", kind="stable").reset_index(drop=True)
+    fps = np.zeros((len(df), base.fps.shape[1]), dtype=np.uint8)
+    is_old = df["src"].to_numpy() >= 0
+    fps[is_old] = base.fps[df["src"].to_numpy()[is_old]]
+    new_smiles = df.loc[~is_old, "smiles"].to_numpy()
+    rows_new = np.flatnonzero(~is_old)
+    for r, smi in zip(tqdm(rows_new, desc="extra fingerprints"), new_smiles):
+        fps[r] = morgan_bits(smi)
+    df = df.drop(columns=["src"])
+    cache.mkdir(parents=True, exist_ok=True)
+    df.to_parquet(f_df)
+    np.save(f_fp, fps)
+    print(f"pool: {is_old.sum():,} train + {(~is_old).sum():,} external = {len(df):,}")
+    return _make_pool(df, fps)
+
+
+def _train_pool(meta: pd.DataFrame, cache: Path) -> Pool:
     f_df, f_fp = cache / "pool.parquet", cache / "pool_fps.npy"
     if f_df.exists() and f_fp.exists():
-        df = pd.read_parquet(f_df)
-        return Pool(df, np.load(f_fp), {k: i for i, k in enumerate(df["inchikey14"])})
+        return _make_pool(pd.read_parquet(f_df), np.load(f_fp))
     u = meta.drop_duplicates("inchikey14")[["inchikey14", "normalized_smiles"]]
     rows = []
     for k, smi in tqdm(zip(u["inchikey14"], u["normalized_smiles"]), total=len(u), desc="pool masses"):
@@ -65,7 +106,7 @@ def build_pool(meta: pd.DataFrame, cache: Path) -> Pool:
     cache.mkdir(parents=True, exist_ok=True)
     df.to_parquet(f_df)
     np.save(f_fp, fps)
-    return Pool(df, fps, {k: i for i, k in enumerate(df["inchikey14"])})
+    return _make_pool(df, fps)
 
 
 def select_library_rows(meta: pd.DataFrame, per_lib: int, max_ppm: float, seed: int = 0) -> pd.DataFrame:
@@ -84,7 +125,14 @@ def build_library(
 ) -> Library:
     f_meta, f_pk, f_nl = cache / "lib_meta.parquet", cache / "lib_pk.npz", cache / "lib_nl.npz"
     if f_meta.exists() and f_pk.exists() and f_nl.exists():
-        return Library(pd.read_parquet(f_meta), sp.load_npz(f_pk), sp.load_npz(f_nl))
+        lm = pd.read_parquet(f_meta)
+        # struct_id indexes the pool, which may differ from the one the cache was built with: remap via train row
+        keys = meta["inchikey14"].to_numpy()[lm["row"].to_numpy()]
+        lm["struct_id"] = pd.Series(keys).map(pool.key_to_id).to_numpy()
+        if lm["struct_id"].isna().any():
+            raise ValueError("library structures missing from the pool")
+        lm["struct_id"] = lm["struct_id"].astype(np.int64)
+        return Library(lm, sp.load_npz(f_pk), sp.load_npz(f_nl))
     sel = select_library_rows(meta, per_lib, max_ppm)
     sel = sel[sel["inchikey14"].isin(pool.key_to_id)]
     want = np.zeros(len(meta), dtype=bool)
