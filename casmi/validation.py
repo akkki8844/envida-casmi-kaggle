@@ -69,6 +69,13 @@ def make_items(lib: Library, pool: Pool, n_per_class: int, seed: int = 0, nn_thr
         else:
             nb = np.flatnonzero(_tanimoto_to_all(pool, pool_n, sid) >= nn_thresh)
             nb = np.union1d(nb, [sid])
+            # tautomers of the truth can sit in the pool under another plain InChIKey; they share the
+            # formula (so the mass), so check the official key only inside a tight mass window
+            mass, tk = pool.mass[sid], key14(pool.df["smiles"].iat[sid])
+            lo = int(np.searchsorted(pool.mass, mass - mass * 5e-6))
+            hi = int(np.searchsorted(pool.mass, mass + mass * 5e-6, side="right"))
+            same = [i for i in range(lo, hi) if key14(pool.df["smiles"].iat[i]) == tk]
+            nb = np.union1d(nb, same)
             ex = Exclusion(lib_struct_ids=nb, pool_ids=nb)
         items.append(Item(panel, cls, sid, rows, ex))
 
