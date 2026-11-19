@@ -140,12 +140,17 @@ class BaselineRanker:
             a_w = np.array([s for _, s in top], dtype=np.float32) ** self.p.power
             T = self.tanimoto(cand, a_ids)
             weighted = T * a_w[None, :]
-            analog = weighted.max(axis=1) + 1e-3 * weighted.sum(axis=1)
+            best = weighted.max(axis=1)
+            bonus = 1e-3 * weighted.sum(axis=1)
             own = np.array([scores.get(int(c), 0.0) for c in cand], dtype=np.float32) ** self.p.power
-            analog = np.where(has_spec, np.maximum(own, self.p.spec_penalty * analog), analog)
-            final = analog + final
-        if self.p.spec_penalty < 1.0:  # with no evidence at all, still prefer structures without spectra
-            final = final - has_spec * 1e-4
+            best = np.where(has_spec, np.maximum(own, self.p.spec_penalty * best), best)
+            # exact own-spectrum matches win ties against fingerprint twins that have no spectra
+            final = best + bonus + has_spec * (own >= best - 1e-9) * (own > 0) * 1e-5 + final
+            no_evidence = best <= 0
+        else:
+            no_evidence = np.ones(cand.size, dtype=bool)
+        if self.p.spec_penalty < 1.0:  # with no evidence at all, prefer structures without spectra
+            final = final - (has_spec & no_evidence) * 1e-4
         order = np.argsort(-final)
         out, seen = [], set()
         for i in order[: k * 4]:
