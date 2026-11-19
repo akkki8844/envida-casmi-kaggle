@@ -1,0 +1,18 @@
+[project]
+name = "envida-casmi-kaggle"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+  "rdkit==2026.3.3",
+  "numpy",
+  "pandas",
+  "pyarrow",
+  "scipy",
+  "scikit-learn",
+  "lightgbm",
+  "tqdm",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
