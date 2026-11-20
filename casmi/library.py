@@ -175,3 +175,27 @@ def build_library(
     sp.save_npz(f_pk, pk, compressed=False)
     sp.save_npz(f_nl, nl, compressed=False)
     return Library(lib_meta, pk, nl)
+
+
+def load_raw_peaks(train_path: Path, rows, batch: int = 50_000) -> dict[int, tuple[np.ndarray, np.ndarray, float]]:
+    """Raw MS/MS peaks for the given train.parquet rows: {row: (mz, intensity, precursor_mz)}."""
+    need = np.unique(np.asarray(list(rows), dtype=np.int64))
+    out: dict[int, tuple] = {}
+    pf = pq.ParquetFile(train_path)
+    offset = 0
+    for b in tqdm(pf.iter_batches(batch_size=batch, columns=["ms2_mzs", "ms2_normalized_intensities", "precursor_mz"]),
+                  desc="raw peaks"):
+        n = b.num_rows
+        lo, hi = np.searchsorted(need, [offset, offset + n])
+        if hi > lo:
+            idx = need[lo:hi] - offset
+            t = b.take(idx)
+            mzs = t.column("ms2_mzs").to_pylist()
+            ints = t.column("ms2_normalized_intensities").to_pylist()
+            prec = t.column("precursor_mz").to_numpy(zero_copy_only=False)
+            for k, r in enumerate(need[lo:hi]):
+                out[int(r)] = (np.asarray(mzs[k], dtype=np.float64), np.asarray(ints[k], dtype=np.float64), float(prec[k]))
+        offset += n
+        if hi >= need.size:
+            break
+    return out

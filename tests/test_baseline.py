@@ -69,7 +69,7 @@ def test_features_align_with_candidates_and_heuristic():
     q = _query(spec, "caffeine")
     cand, X, _ = r.features(q, Exclusion())
     assert X.shape == (cand.size, len(BaselineRanker.FEATURES))
-    assert np.isfinite(X).all()
+    assert np.isfinite(X[:, : len(BaselineRanker.BASE_FEATURES)]).all()
     h = X[:, BaselineRanker.FEATURES.index("h_score")]
     assert key14(pool.df["smiles"].iat[int(cand[np.argmax(h)])]) == key14(SMILES["caffeine"])
     # the heuristic path and the feature path must agree on the order

@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 import numpy as np
 import scipy.sparse as sp
 
+from . import fragments as fr
 from .chem import key14
 from .library import Library, Pool
 
@@ -25,6 +26,7 @@ class Query:
     nl: sp.csr_matrix
     neutral_mass: float
     mode: int
+    peaks: list | None = None  # raw (mz, intensity, precursor_mz, adduct) per spectrum, for fragment matching
 
 
 @dataclass
@@ -65,6 +67,11 @@ class BaselineRanker:
             self.block[md] = (int(idx[0]), int(idx[-1]) + 1) if idx.size else (0, 0)
         self.pool_mass = pool.mass
         self.pool_n = pool.fps.sum(axis=1).astype(np.float32)
+        self.frag: fr.FragmentScorer | None = None
+
+    def enable_fragments(self, top_k: int = 30) -> "BaselineRanker":
+        self.frag = fr.FragmentScorer(self.pool.df["smiles"].to_numpy(), top_k=top_k)
+        return self
 
     # ---- spectral similarity ------------------------------------------------------------------
     def anchor_scores(self, q: Query, ex: Exclusion) -> tuple[dict[int, float], np.ndarray]:
@@ -179,13 +186,18 @@ class BaselineRanker:
         return final
 
     # ---- features for a learned ranker -------------------------------------------------------------
-    FEATURES = [
+    BASE_FEATURES = [
         "h_score", "h_rank_pct", "h_gap", "s1_T", "s2_T", "s3_T", "sum_s3_T", "sum_s1_T", "t_max", "t_top1",
         "s_at_tmax", "n_t07", "n_t05", "own", "has_spec", "in_db", "in_train", "ppm", "abs_ppm", "fp_bits",
         "q_best_sim", "q_second_sim", "q_n_cand", "q_n_anchor", "q_n_spec", "q_mode", "q_mass", "q_n_spec_cand",
     ]
+    FEATURES = BASE_FEATURES + fr.FEATURES  # fragment columns are NaN outside the heuristic top-k
 
-    def features(self, q: Query, ex: Exclusion) -> tuple[np.ndarray, np.ndarray, dict]:
+    def top_k_rows(self, h: np.ndarray) -> np.ndarray:
+        k = self.frag.top_k if self.frag else 30
+        return np.argsort(-h, kind="stable")[:k]
+
+    def features(self, q: Query, ex: Exclusion, with_frag: bool = True) -> tuple[np.ndarray, np.ndarray, dict]:
         """Per-candidate feature matrix (columns = FEATURES) for the mass window."""
         scores, visible = self.anchor_scores(q, ex)
         cand = self.candidates(q.neutral_mass, ex)
@@ -239,8 +251,12 @@ class BaselineRanker:
         F["q_mode"][:] = q.mode
         F["q_mass"][:] = q.neutral_mass
         F["q_n_spec_cand"][:] = has_spec.mean()
-        X = np.stack([np.asarray(F[k], dtype=np.float32) for k in self.FEATURES], axis=1)
-        return cand, X, diag
+        X = np.stack([np.asarray(F[k], dtype=np.float32) for k in self.BASE_FEATURES], axis=1)
+        FX = np.full((n, len(fr.FEATURES)), np.nan, dtype=np.float32)
+        if with_frag and self.frag is not None and q.peaks:
+            top = self.top_k_rows(h)
+            FX[top] = self.frag.match(q.peaks, q.mode, cand[top])
+        return cand, np.concatenate([X, FX], axis=1), diag
 
 
 class LearnedRanker(BaselineRanker):
@@ -250,11 +266,13 @@ class LearnedRanker(BaselineRanker):
         super().__init__(lib, pool, params)
         import lightgbm as lgb
         self.model = lgb.Booster(model_file=str(model_path))
+        if self.model.num_feature() > len(self.BASE_FEATURES):  # v4+ models read the fragment columns
+            self.enable_fragments()
 
     def rank(self, q: Query, ex: Exclusion | None = None, k: int = 25) -> tuple[list[str], dict]:
         ex = ex or Exclusion()
         cand, X, diag = self.features(q, ex)
         if cand.size == 0:
             return [], diag
-        pred = self.model.predict(X)
+        pred = self.model.predict(X[:, : self.model.num_feature()])  # v3 models use the base columns only
         return self.emit(cand, pred, k), diag

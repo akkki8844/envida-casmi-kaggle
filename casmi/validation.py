@@ -158,11 +158,15 @@ def collect_features(ranker, lib: Library, items: list[Item], desc: str = "featu
     return np.concatenate(Xs), np.concatenate(ys), np.array(groups), meta
 
 
-def item_query(lib: Library, item: Item) -> Query:
+def item_query(lib: Library, item: Item, raw: dict | None = None) -> Query:
+    """raw: {train row: (mz, intensity, precursor_mz)} from library.load_raw_peaks, for fragment features."""
     m = lib.meta.iloc[item.rows]
+    peaks = None
+    if raw is not None:
+        peaks = [(*raw[int(r)], a) for r, a in zip(m["row"], m["adduct"]) if int(r) in raw]
     return Query(
         pk=lib.pk[item.rows], nl=lib.nl[item.rows],
-        neutral_mass=float(np.median(m["neutral_mass"])), mode=int(m["mode"].iloc[0]),
+        neutral_mass=float(np.median(m["neutral_mass"])), mode=int(m["mode"].iloc[0]), peaks=peaks,
     )
 
 

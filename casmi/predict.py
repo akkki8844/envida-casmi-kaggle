@@ -21,8 +21,10 @@ def molecule_query(g: pd.DataFrame) -> Query:
         neg = (g["ionization_mode"] == "negative").to_numpy()
         masses = list(g["precursor_mz"].to_numpy() + np.where(neg, M_PROTON, -M_PROTON))
     mode = int((g["ionization_mode"] == "negative").mean() > 0.5)
+    peaks = [(np.asarray(r.ms2_mzs), np.asarray(r.ms2_normalized_intensities), float(r.precursor_mz), r.adduct)
+             for r in g.itertuples()]
     return Query(pk=stack_csr([v[0] for v in vecs]), nl=stack_csr([v[1] for v in vecs]),
-                 neutral_mass=float(np.median(masses)), mode=mode)
+                 neutral_mass=float(np.median(masses)), mode=mode, peaks=peaks)
 
 
 def predict(test: pd.DataFrame, ranker, k: int = 25, progress=None) -> pd.DataFrame:
