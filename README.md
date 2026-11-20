@@ -62,6 +62,26 @@ a real class-2 molecule has no public spectra, so it is never a train structure.
 98% of np-panel truths are in COCONUT. The e180 panel scores 0 under the realistic rule: its synthetic compounds
 would need PubChem. The penalty trades class 1 for class 2; on the LB the gap (0.009) is inside the noise (~0.016).
 
+## v3: learned ranker (LightGBM LambdaRank)
+
+- `BaselineRanker.features` gives 28 per-candidate features: the v2 heuristic score and rank, analog-similarity ×
+  Tanimoto aggregates over the top 100 library anchors, the candidate's own spectral match, has_spec / in_train /
+  in_db, ppm error, fingerprint density and query-level context.
+- Training queries (`make_train_items`, `scripts/train_ranker.py`): 1,500 simulated class 1/2 queries on structures
+  disjoint from the eval panels, preferring enveda-180 query spectra. Features are built in ~1 h.
+- **Leak fixed**: a simulated class-2 truth kept `in_train=1` with all spectra hidden, which never happens on the
+  test set (held-out MRR 0.90, fake). Hidden structures now look database-only (held-out MRR 0.70 vs heuristic 0.59).
+- Class-1 groups are repeated ×3 in training (v3b), since the plain model under-trusted direct library hits.
+  Rank blends with the heuristic did not help (`scripts/blend_eval.py`).
+
+| config | np c1 | np c2 | np mixed | public LB |
+|---|---|---|---|---|
+| v2 heuristic | 0.844 | 0.423 | 0.338 | 0.218 |
+| v3 LambdaRank | 0.602 | 0.618 | 0.368 | **0.235** |
+| v3b LambdaRank, class 1 ×3 | 0.733 | 0.606 | 0.389 | pending |
+
+Kaggle runtime ~21-26 min (library vectorisation ~9 min, ranking 400 molecules ~5-10 min).
+
 ## Usage
 
 ```bash
@@ -79,5 +99,6 @@ and the submission notebook in `build/`; upload with `kaggle datasets create` an
 ## Next ideas
 
 - A gated PubChem tier for class-2 molecules that COCONUT does not cover.
-- A learned ranker (LightGBM LambdaRank) over library, analog, fragmentation and fingerprint features.
+- More ranker features: MetFrag-style fragment explanation, ICEBERG/CFM-ID simulated-spectrum similarity.
+- More training queries (features take ~2.3 s/query) and class-3-style groups.
 - A spectrum-to-fingerprint or contrastive model trained on enveda-180 + public libraries.
