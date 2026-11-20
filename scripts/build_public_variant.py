@@ -46,6 +46,7 @@ def main():
     ap.add_argument("--layers", nargs="+", default=[])
     ap.add_argument("--commit-mode", default=None, help="override the base's COMMIT_MODE ('smoke' or 'fast')")
     ap.add_argument("--set", nargs="*", default=[], help="layer constant overrides, e.g. extlib_overlay:TAU=0.70")
+    ap.add_argument("--swap", nargs="*", default=[], help="dataset substitutions old=new (our private copies)")
     ap.add_argument("--replace-cell", type=int, default=None, help="replace this base cell with the layers")
     ap.add_argument("--replace-marker", default="", help="text the replaced cell must contain (safety check)")
     a = ap.parse_args()
@@ -86,6 +87,10 @@ def main():
         for d in LAYER_DATASETS.get(name, []):
             if d not in meta["dataset_sources"]:
                 meta["dataset_sources"].append(d)
+    for item in a.swap:  # attach our private copy instead of an upstream dataset
+        old, new = item.split("=", 1)
+        assert old in meta["dataset_sources"], f"--swap: {old} is not attached"
+        meta["dataset_sources"] = [new if s == old else s for s in meta["dataset_sources"]]
     # code submissions refuse "non-versioned" datasets: pin every source to its current version
     from kaggle.api.kaggle_api_extended import KaggleApi
     api = KaggleApi()
