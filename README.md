@@ -41,6 +41,27 @@ v1 results (60 molecules per class, seed 1; MRR@25):
 Differences between powers are inside the bootstrap CIs (about +-0.04). Forum reports say local panels overstate the leaderboard a lot, so treat these as relative numbers only.
 Class 3 scores 0 by construction: v1 has no de novo channel. The pool is train structures only (no COCONUT/PubChem yet).
 
+**Public LB: v1 = 0.140.** The table above overstated it because the v1 harness kept class-2 truths in the pool;
+a real class-2 molecule has no public spectra, so it is never a train structure.
+
+## v2: COCONUT pool + realistic harness
+
+- **Candidate pool** = train structures + COCONUT 2026-11 (CC0; `scripts/build_coconut.py`: largest fragment, stereo removed,
+  deduplicated on InChIKey14) = 725,569 structures.
+- **Harness fix**: a class-2 truth stays in the pool only if the external database has it. Under this rule v1 scores
+  ~0.16 on the np panel, close to its real 0.140, so the harness now tracks the leaderboard much better.
+- **Known-structure penalty** (`spec_penalty`): a candidate with visible library spectra that do not match the query is
+  unlikely to be the answer; its analog score is multiplied by the penalty.
+
+| config | np c1 | np c2 | np mixed | public LB |
+|---|---|---|---|---|
+| v1 (train pool) | ~0.82 | 0 | ~0.16 | 0.140 |
+| v2 (+COCONUT, penalty 1.0) | 0.844 | 0.436 | 0.343 | **0.218** |
+| v2b (+COCONUT, penalty 0.3) | 0.782 | 0.474 | 0.346 | 0.209 |
+
+98% of np-panel truths are in COCONUT. The e180 panel scores 0 under the realistic rule: its synthetic compounds
+would need PubChem. The penalty trades class 1 for class 2; on the LB the gap (0.009) is inside the noise (~0.016).
+
 ## Usage
 
 ```bash
@@ -57,6 +78,6 @@ and the submission notebook in `build/`; upload with `kaggle datasets create` an
 
 ## Next ideas
 
-- Add COCONUT (and a gated PubChem tier) to the candidate pool for class 2 coverage.
+- A gated PubChem tier for class-2 molecules that COCONUT does not cover.
 - A learned ranker (LightGBM LambdaRank) over library, analog, fragmentation and fingerprint features.
 - A spectrum-to-fingerprint or contrastive model trained on enveda-180 + public libraries.
