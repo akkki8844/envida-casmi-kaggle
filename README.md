@@ -100,6 +100,32 @@ score, explained peak fraction, log fragment count, and the score relative to th
 
 The two largest fragment gains are the query-relative score and rank. Kaggle runtime 18-28 min.
 
+## v5: FPNet features (not submitted)
+
+Two spectrum-to-fingerprint models (`casmi/fpnet.py`, `scripts/train_fpnet.py`; sparse EmbeddingBag, trained on CPU on
+two structure folds, numpy inference) give out-of-fold fingerprint-agreement features (`scripts/train_v5.py`).
+Out-of-fold Tanimoto@0.5 is only 0.25; harness np mixed 0.390 against 0.400 for v4, so v5 was not submitted.
+
+## Public base + our layers
+
+The public board is dominated by one shared pipeline (0.48-0.50; top-100 line 0.496 on 2026-11-20). From here on, top
+public notebooks are run as private forks with our own post-processing layers appended or swapped in
+(`scripts/build_public_variant.py`; every dataset version pinned, since code submissions refuse "non-versioned"
+datasets; `--swap` attaches our verified private copies, checked by `scripts/verify_dataset_copy.py`).
+
+- `kaggle_layers/extlib_overlay.py`: external measured-library rank-1 overlay (GNPS multiplex rebuild + MassBank). It
+  drops the 117 GNPS-NIST14-MATCHES rows and the MassBank CASMI subset (NIST derivatives are banned), and handles the
+  multiplex library's pooled spectra, where one spectrum is annotated with up to ~150 isomers and the public rule
+  promoted an arbitrary one. `scripts/extlib_precision.py` replays it on timsTOF train molecules:
+
+  | rule | enveda-np-examples: fires | precision |
+  |---|---|---|
+  | TAU 0.80 (public) | 56% | 93% |
+  | TAU 0.70 | 66% | 92% |
+  | TAU 0.70 + MassBank recorded precursors | 70% | 91% |
+
+- `kaggle_layers/neighbour_network.py`: the public N-1c network with a session-time guard.
+
 ## Usage
 
 ```bash
