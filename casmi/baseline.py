@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 import numpy as np
 import scipy.sparse as sp
 
+from . import fpnet as fpm
 from . import fragments as fr
 from .chem import key14
 from .library import Library, Pool
@@ -68,6 +69,12 @@ class BaselineRanker:
         self.pool_mass = pool.mass
         self.pool_n = pool.fps.sum(axis=1).astype(np.float32)
         self.frag: fr.FragmentScorer | None = None
+        self.fpnet: fpm.FPNet | None = None
+        self.fp_models: list[int] | None = None  # which FPNet models to average (None = all)
+
+    def enable_fpnet(self, paths) -> "BaselineRanker":
+        self.fpnet = fpm.FPNet(paths)
+        return self
 
     def enable_fragments(self, top_k: int = 30) -> "BaselineRanker":
         self.frag = fr.FragmentScorer(self.pool.df["smiles"].to_numpy(), top_k=top_k)
@@ -191,7 +198,8 @@ class BaselineRanker:
         "s_at_tmax", "n_t07", "n_t05", "own", "has_spec", "in_db", "in_train", "ppm", "abs_ppm", "fp_bits",
         "q_best_sim", "q_second_sim", "q_n_cand", "q_n_anchor", "q_n_spec", "q_mode", "q_mass", "q_n_spec_cand",
     ]
-    FEATURES = BASE_FEATURES + fr.FEATURES  # fragment columns are NaN outside the heuristic top-k
+    # fragment columns are NaN outside the heuristic top-k; FPNet columns are NaN without enable_fpnet
+    FEATURES = BASE_FEATURES + fr.FEATURES + fpm.FEATURES
 
     def top_k_rows(self, h: np.ndarray) -> np.ndarray:
         k = self.frag.top_k if self.frag else 30
@@ -256,7 +264,11 @@ class BaselineRanker:
         if with_frag and self.frag is not None and q.peaks:
             top = self.top_k_rows(h)
             FX[top] = self.frag.match(q.peaks, q.mode, cand[top])
-        return cand, np.concatenate([X, FX], axis=1), diag
+        FP = np.full((n, len(fpm.FEATURES)), np.nan, dtype=np.float32)
+        if self.fpnet is not None:
+            p = self.fpnet.query_probs(q.pk, q.nl, q.mode, self.fp_models)
+            FP = fpm.candidate_features(p, self.pool.fps[cand])
+        return cand, np.concatenate([X, FX, FP], axis=1), diag
 
 
 class LearnedRanker(BaselineRanker):
@@ -266,8 +278,15 @@ class LearnedRanker(BaselineRanker):
         super().__init__(lib, pool, params)
         import lightgbm as lgb
         self.model = lgb.Booster(model_file=str(model_path))
-        if self.model.num_feature() > len(self.BASE_FEATURES):  # v4+ models read the fragment columns
+        nf = self.model.num_feature()
+        if nf > len(self.BASE_FEATURES):  # v4+ models read the fragment columns
             self.enable_fragments()
+        if nf > len(self.BASE_FEATURES) + len(fr.FEATURES):  # v5+ also read FPNet columns (models beside the ranker)
+            from pathlib import Path
+            paths = fpm.default_paths(Path(model_path).parent)
+            if not paths:
+                raise FileNotFoundError("ranker needs fpnet_f*.npz next to the model file")
+            self.enable_fpnet(paths)
 
     def rank(self, q: Query, ex: Exclusion | None = None, k: int = 25) -> tuple[list[str], dict]:
         ex = ex or Exclusion()

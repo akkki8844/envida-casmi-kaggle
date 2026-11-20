@@ -25,6 +25,7 @@ ap.add_argument("--ppm", type=float, default=10.0)
 ap.add_argument("--spec-penalty", type=float, default=1.0)
 ap.add_argument("--coconut", default="", help="local COCONUT pool parquet: shipped as a dataset, used as extra pool")
 ap.add_argument("--model", default="", help="LightGBM ranker file shipped inside the code dataset")
+ap.add_argument("--fpnet", default="", help="glob of FPNet weight files to ship (v5+), e.g. data/models/fpnet_f*.npz")
 a = ap.parse_args()
 
 ds_slug = f"envida-casmi-{a.dataset_version}-code"
@@ -51,6 +52,8 @@ for f in (ROOT / "casmi").glob("*.py"):
     shutil.copy(f, ds / "casmi" / f.name)
 if a.model:
     shutil.copy(ROOT / a.model, ds / "casmi" / "ranker_model.txt")
+for p in sorted(ROOT.glob(a.fpnet)) if a.fpnet else []:  # FPNet weights live beside the ranker model
+    shutil.copy(p, ds / "casmi" / p.name)
 (ds / "dataset-metadata.json").write_text(json.dumps({
     "title": f"envida casmi {a.dataset_version} code",
     "id": f"{a.user}/{ds_slug}",
