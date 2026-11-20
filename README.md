@@ -82,6 +82,24 @@ would need PubChem. The penalty trades class 1 for class 2; on the LB the gap (0
 
 Kaggle runtime ~21-26 min (library vectorisation ~9 min, ranking 400 molecules ~5-10 min).
 
+## v4: fragment-explanation features (MetFrag-style)
+
+98% of wrong winners share the truth's formula, so the ranker needs structure-level evidence.
+`casmi/fragments.py` enumerates each candidate's fragments (break one acyclic bond or two bonds of one ring, two
+levels; atoms keep their own hydrogens; minimal bonds-broken cost per fragment) and matches the query's raw peaks
+(10 ppm, ±2 H rearrangements, sodiated variants; peaks near the precursor ignored). Seven features for the heuristic
+top-30 candidates (NaN elsewhere): explained intensity, explained by cheap fragments (1 bond, |H| ≤ 1), a cost-weighted
+score, explained peak fraction, log fragment count, and the score relative to the query's best and its rank.
+~110 ms per structure; 43k structures fragment in 3 min on 11 processes. `scripts/train_v4.py` reuses the v3 features.
+
+| config | held-out | np c1 | np c2 | np mixed | public LB |
+|---|---|---|---|---|---|
+| v3 (base features) | 0.703 | 0.602 | 0.618 | 0.368 | 0.235 |
+| **v4 (+ fragments)** | 0.723 | 0.655 | 0.673 | 0.400 | **0.263** |
+| v4b (+ fragments, class 1 ×3) | 0.723 | 0.726 | 0.630 | 0.397 | 0.257 |
+
+The two largest fragment gains are the query-relative score and rank. Kaggle runtime 18-28 min.
+
 ## Usage
 
 ```bash
