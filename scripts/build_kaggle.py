@@ -24,6 +24,7 @@ ap.add_argument("--power", type=float, default=3.0)
 ap.add_argument("--ppm", type=float, default=10.0)
 ap.add_argument("--spec-penalty", type=float, default=1.0)
 ap.add_argument("--coconut", default="", help="local COCONUT pool parquet: shipped as a dataset, used as extra pool")
+ap.add_argument("--model", default="", help="LightGBM ranker file shipped inside the code dataset")
 a = ap.parse_args()
 
 ds_slug = f"envida-casmi-{a.dataset_version}-code"
@@ -48,6 +49,8 @@ if a.coconut:
 
 for f in (ROOT / "casmi").glob("*.py"):
     shutil.copy(f, ds / "casmi" / f.name)
+if a.model:
+    shutil.copy(ROOT / a.model, ds / "casmi" / "ranker_model.txt")
 (ds / "dataset-metadata.json").write_text(json.dumps({
     "title": f"envida casmi {a.dataset_version} code",
     "id": f"{a.user}/{ds_slug}",
@@ -113,7 +116,19 @@ print(f"pool {len(pool.df):,}  library {len(lib.meta):,}  elapsed {time.time()-T
     r'''import pandas as pd
 from casmi.baseline import BaselineRanker, Params
 from casmi.predict import predict
-ranker = BaselineRanker(lib, pool, Params(power=POWER, ppm=PPM, spec_penalty=SPEC_PENALTY))
+params = Params(power=POWER, ppm=PPM, spec_penalty=SPEC_PENALTY)
+model_file = os.path.join("/tmp/casmi_pkg/casmi", "ranker_model.txt")
+ranker = None
+if USE_MODEL and os.path.isfile(model_file):
+    try:
+        from casmi.baseline import LearnedRanker
+        ranker = LearnedRanker(lib, pool, model_file, params)
+        print("ranker: LightGBM", model_file)
+    except Exception as e:  # e.g. lightgbm missing from the image
+        print("WARNING: learned ranker unavailable, using heuristic:", repr(e))
+if ranker is None:
+    ranker = BaselineRanker(lib, pool, params)
+    print("ranker: heuristic")
 test = pd.read_parquet(test_path)
 print(f"test: {len(test)} spectra, {test.molecule_id.nunique()} molecules")
 sub = predict(test, ranker)
@@ -122,7 +137,7 @@ print(sub.head(3))
 print(f"total elapsed {time.time()-T0:.0f}s")''',
 ]
 CELLS[0] = (f"POWER, PPM, SPEC_PENALTY = {a.power}, {a.ppm}, {a.spec_penalty}\n"
-            f"USE_COCONUT = {bool(a.coconut)}\n") + CELLS[0]
+            f"USE_COCONUT = {bool(a.coconut)}\nUSE_MODEL = {bool(a.model)}\n") + CELLS[0]
 nb = {
     "cells": [{"cell_type": "code", "execution_count": None, "metadata": {}, "outputs": [],
                "source": c.splitlines(keepends=True)} for c in CELLS],

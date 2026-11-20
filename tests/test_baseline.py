@@ -63,6 +63,20 @@ def test_hidden_truth_keeps_candidate_in_pool_but_not_first_by_anchor():
     assert key14(SMILES["caffeine"]) in keys  # still reachable through the pool (class-2 style)
 
 
+def test_features_align_with_candidates_and_heuristic():
+    pool, lib, spec = _toy()
+    r = BaselineRanker(lib, pool, Params())
+    q = _query(spec, "caffeine")
+    cand, X, _ = r.features(q, Exclusion())
+    assert X.shape == (cand.size, len(BaselineRanker.FEATURES))
+    assert np.isfinite(X).all()
+    h = X[:, BaselineRanker.FEATURES.index("h_score")]
+    assert key14(pool.df["smiles"].iat[int(cand[np.argmax(h)])]) == key14(SMILES["caffeine"])
+    # the heuristic path and the feature path must agree on the order
+    c2, final, _ = r.score(q, Exclusion())
+    assert np.array_equal(cand, c2) and np.allclose(final, h, atol=1e-6)
+
+
 def test_class3_removes_truth_from_pool():
     pool, lib, spec = _toy()
     r = BaselineRanker(lib, pool, Params())

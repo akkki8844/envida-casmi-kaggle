@@ -14,7 +14,7 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from casmi.baseline import BaselineRanker, Params  # noqa: E402
+from casmi.baseline import BaselineRanker, LearnedRanker, Params  # noqa: E402
 from casmi.library import build_library, build_pool, load_train_meta  # noqa: E402
 from casmi.validation import evaluate, make_items, summarise  # noqa: E402
 
@@ -28,6 +28,7 @@ ap.add_argument("--power", type=float, nargs="+", default=[3.0])
 ap.add_argument("--spec-penalty", type=float, nargs="+", default=[1.0])
 ap.add_argument("--ppm", type=float, default=10.0)
 ap.add_argument("--out", default="data/eval.csv")
+ap.add_argument("--model", default=None, help="LightGBM ranker; if given it is evaluated after the heuristic configs")
 a = ap.parse_args()
 
 train = Path(a.data) / "train.parquet"
@@ -46,4 +47,10 @@ for p, pen in itertools.product(a.power, a.spec_penalty):
     df["power"], df["spec_penalty"] = p, pen
     frames.append(df)
     print(f"\n=== power {p}, spec_penalty {pen}, ppm {a.ppm}, extra {a.extra}\n{summarise(df)}", flush=True)
+if a.model:
+    ranker = LearnedRanker(lib, pool, a.model, Params(ppm=a.ppm))
+    df = evaluate(ranker, lib, pool, items, desc="model")
+    df["power"], df["spec_penalty"] = -1, -1
+    frames.append(df)
+    print(f"\n=== learned ranker {a.model}\n{summarise(df)}", flush=True)
 pd.concat(frames).to_csv(a.out, index=False)

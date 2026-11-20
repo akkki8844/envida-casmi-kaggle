@@ -108,6 +108,56 @@ def make_items(lib: Library, pool: Pool, n_per_class: int, seed: int = 0, nn_thr
     return items
 
 
+def make_train_items(lib: Library, pool: Pool, n: int, exclude_structs: set[int], seed: int = 100) -> list[Item]:
+    """Ranker-training queries on structures NOT in `exclude_structs` (keep the eval panels out).
+
+    Class 1: query spectra from one library, the structure's spectra from that library and the timsTOF libraries
+             hidden, the rest visible. Class 2: all its spectra hidden; only for structures in the external
+             database (otherwise the truth is unreachable and the group has no positive).
+    Query libraries prefer enveda-180 (same instrument as the test set).
+    """
+    rng = np.random.default_rng(seed)
+    m = lib.meta
+    libs_of = m.groupby("struct_id")["ingest_lib"].agg(lambda s: sorted(set(s)))
+    by_struct_lib = m.groupby(["struct_id", "ingest_lib"]).indices
+    in_db = pool.df["in_db"].to_numpy() if "in_db" in pool.df else np.zeros(len(pool.df), dtype=bool)
+    keys = pool.df["inchikey14"].to_numpy()
+    structs = np.array(sorted((s for s in libs_of.index if s not in exclude_structs), key=lambda s: keys[s]))
+    rng.shuffle(structs)
+    items: list[Item] = []
+    for sid in structs:
+        if len(items) >= n:
+            break
+        libs = [l for l in libs_of[sid] if l != "enveda-np-examples"]
+        if not libs:
+            continue
+        qlib = "enveda-180" if ("enveda-180" in libs and rng.random() < 0.6) else libs[rng.integers(len(libs))]
+        others = [l for l in libs if l != qlib and l not in TIMSTOF_LIBS]
+        rows = np.asarray(by_struct_lib[(sid, qlib)])
+        rows = rng.choice(rows, size=min(len(rows), 1 + int(rng.poisson(2.5))), replace=False)
+        if others and rng.random() < 0.5:
+            ex = Exclusion(truth_id=int(sid), truth_libs=tuple(set(TIMSTOF_LIBS) | {qlib}))
+            items.append(Item("train", 1, int(sid), rows, ex))
+        elif in_db[sid]:
+            items.append(Item("train", 2, int(sid), rows, Exclusion(lib_struct_ids=np.array([sid]))))
+    return items
+
+
+def collect_features(ranker, lib: Library, items: list[Item], desc: str = "features"):
+    """Feature matrix, labels and group sizes; groups whose truth is not a candidate are dropped."""
+    Xs, ys, groups, meta = [], [], [], []
+    for it in tqdm(items, desc=desc):
+        cand, X, _ = ranker.features(item_query(lib, it), it.ex)
+        y = (cand == it.struct_id).astype(np.int8)
+        if y.sum() == 0:
+            continue
+        Xs.append(X)
+        ys.append(y)
+        groups.append(len(y))
+        meta.append((it.panel, it.cls, it.struct_id))
+    return np.concatenate(Xs), np.concatenate(ys), np.array(groups), meta
+
+
 def item_query(lib: Library, item: Item) -> Query:
     m = lib.meta.iloc[item.rows]
     return Query(
