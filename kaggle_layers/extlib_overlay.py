@@ -40,6 +40,7 @@ PROTON = 1.007276
 TIE_EPS = 0.002       # references within this cosine of the best are a tie (same pooled spectrum)
 MAX_TIE_INSERT = 2    # insert a tied structure that is not in the list only when at most this many tie
 MAX_TIE_MOVE = 5      # larger tie sets (pooled multiplex spectra: up to ~150 isomers) leave the list alone
+MB_USE_PRECURSOR = False  # True: MassBank references keep their recorded precursor m/z (all adducts)
 
 
 def _key14(smi: str):
@@ -111,7 +112,8 @@ def load_refs(inp: str, log=print):
     mb_hits = sorted(glob.glob(inp + "/**/spectra.parquet", recursive=True),
                      key=lambda p: ("massbank" not in p.lower(), len(p)))
     if mb_hits and "massbank" in mb_hits[0].lower():
-        cols = ["smiles", "exact_mass", "ion_mode", "mzs", "intensities", "is_casmi_subset", "source", "license"]
+        cols = ["smiles", "exact_mass", "ion_mode", "mzs", "intensities", "is_casmi_subset", "source", "license",
+                "precursor_mz"]
         import pyarrow.parquet as pq
         have = set(pq.ParquetFile(mb_hits[0]).schema_arrow.names)
         mb = pd.read_parquet(mb_hits[0], columns=[c for c in cols if c in have])
@@ -123,7 +125,11 @@ def load_refs(inp: str, log=print):
                 continue
             try:
                 mode = 1 if "pos" in str(row.ion_mode).lower() else -1
-                prec = float(row.exact_mass) + PROTON * mode
+                prec = float(row.exact_mass) + PROTON * mode  # the public rule: protonated / deprotonated only
+                if MB_USE_PRECURSOR:  # the record's own precursor, so other adducts can match too
+                    p_rec = float(getattr(row, "precursor_mz", float("nan")))
+                    if np.isfinite(p_rec) and p_rec > 0:
+                        prec = p_rec
                 mz_p = np.asarray(row.mzs, dtype=np.float64)
                 it_p = np.asarray(row.intensities, dtype=np.float64)
                 ok = (mz_p > 0) & (it_p > 0)

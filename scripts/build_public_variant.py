@@ -8,6 +8,7 @@ run as `run(t0_session=NB_T0)`; a layer must leave submission.csv unchanged on a
 are added to the kernel metadata. Writes build/kaggle_<slug>/.
 """
 import argparse
+import ast
 import json
 import re
 import shutil
@@ -20,15 +21,18 @@ LAYER_DATASETS = {
 }
 
 
-def layer_cell(name: str) -> str:
+def layer_cell(name: str, config: dict | None = None) -> str:
     src = (ROOT / "kaggle_layers" / f"{name}.py").read_text(encoding="utf8")
+    sets = "".join(f"setattr(_envida_{name}, {k!r}, {v!r})\n" for k, v in (config or {}).items())
     return (
         f"# ===== envida layer: {name} (kaggle_layers/{name}.py in akkki8844/envida-casmi-kaggle, embedded) =====\n"
+        f"# config overrides: {config or {}}\n"
         "import importlib, os, sys, time\n"
         "os.makedirs('/tmp/envida_layers', exist_ok=True)\n"
         f"open('/tmp/envida_layers/{name}.py', 'w').write({src!r})\n"
         "sys.path.insert(0, '/tmp/envida_layers')\n"
         f"_envida_{name} = importlib.import_module('{name}')\n"
+        + sets +
         f"_envida_{name}_audit = _envida_{name}.run(t0_session=globals().get('NB_T0'))\n"
         f"print('[envida] {name}:', {{k: v for k, v in (_envida_{name}_audit or {{}}).items() if k != 'decisions'}})\n"
     )
@@ -41,6 +45,9 @@ def main():
     ap.add_argument("--slug", required=True)
     ap.add_argument("--layers", nargs="+", default=[])
     ap.add_argument("--commit-mode", default=None, help="override the base's COMMIT_MODE ('smoke' or 'fast')")
+    ap.add_argument("--set", nargs="*", default=[], help="layer constant overrides, e.g. extlib_overlay:TAU=0.70")
+    ap.add_argument("--replace-cell", type=int, default=None, help="replace this base cell with the layers")
+    ap.add_argument("--replace-marker", default="", help="text the replaced cell must contain (safety check)")
     a = ap.parse_args()
     nb = json.loads(Path(a.base).read_text(encoding="utf8"))
     if a.commit_mode:
@@ -56,9 +63,21 @@ def main():
     for c in nb["cells"]:  # outputs of the author's run are not ours to republish
         if c["cell_type"] == "code":
             c["outputs"], c["execution_count"] = [], None
-    for name in a.layers:
-        nb["cells"].append({"cell_type": "code", "execution_count": None, "metadata": {}, "outputs": [],
-                            "source": layer_cell(name).splitlines(keepends=True)})
+    config: dict[str, dict] = {}
+    for item in a.set:  # layer:KEY=value, value parsed as a Python literal
+        layer, kv = item.split(":", 1)
+        k, v = kv.split("=", 1)
+        assert layer in a.layers, f"--set for a layer that is not used: {layer}"
+        config.setdefault(layer, {})[k] = ast.literal_eval(v)
+    new_cells = [{"cell_type": "code", "execution_count": None, "metadata": {}, "outputs": [],
+                  "source": layer_cell(name, config.get(name)).splitlines(keepends=True)} for name in a.layers]
+    if a.replace_cell is not None:  # our layers take the place (and the position) of one base cell
+        old = "".join(nb["cells"][a.replace_cell]["source"])
+        assert a.replace_marker in old, f"cell {a.replace_cell} does not contain {a.replace_marker!r}"
+        nb["cells"][a.replace_cell:a.replace_cell + 1] = new_cells
+        print(f"replaced cell {a.replace_cell} ({old.splitlines()[0][:80]})")
+    else:
+        nb["cells"].extend(new_cells)
     meta = json.loads(Path(a.meta).read_text(encoding="utf8"))
     meta.pop("id_no", None)
     meta.update(id=f"{USER}/{a.slug}", title=a.slug.replace("-", " "), code_file="notebook.ipynb", is_private=True,
