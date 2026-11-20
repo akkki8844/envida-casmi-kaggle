@@ -78,7 +78,7 @@ would need PubChem. The penalty trades class 1 for class 2; on the LB the gap (0
 |---|---|---|---|---|
 | v2 heuristic | 0.844 | 0.423 | 0.338 | 0.218 |
 | v3 LambdaRank | 0.602 | 0.618 | 0.368 | **0.235** |
-| v3b LambdaRank, class 1 ×3 | 0.733 | 0.606 | 0.389 | pending |
+| v3b LambdaRank, class 1 ×3 | 0.733 | 0.606 | 0.389 | 0.227 |
 
 Kaggle runtime ~21-26 min (library vectorisation ~9 min, ranking 400 molecules ~5-10 min).
 
