@@ -25,6 +25,8 @@ def main():
     ap.add_argument("--out", default="data/extlib_precision.csv")
     ap.add_argument("--tau", type=float, default=None)
     ap.add_argument("--mb-precursor", action="store_true")
+    ap.add_argument("--exclude-truth", action="store_true",
+                    help="truth-absent control: drop references of the query's own structure (every hit is then wrong)")
     a = ap.parse_args()
     if a.tau is not None:
         X.TAU = a.tau
@@ -44,6 +46,7 @@ def main():
     order = np.argsort([r[1] for r in refs], kind="stable")
     refs = [refs[i] for i in order]
     prec_arr = np.array([r[1] for r in refs])
+    ref_keys = [X._key14(r[4]) or r[4] for r in refs] if a.exclude_truth else None
     out = []
     for (lib, key), g in t.groupby(["ingest_lib", "inchikey14"]):
         scored = []
@@ -60,6 +63,8 @@ def main():
             for ri in range(np.searchsorted(prec_arr, prec - tol), np.searchsorted(prec_arr, prec + tol, "right")):
                 ref = refs[ri]
                 if ref[0] != mode:
+                    continue
+                if ref_keys is not None and ref_keys[ri] == key:
                     continue
                 cos, n = X.greedy_cosine(m, it, ref[2], ref[3])
                 if n >= X.K_PEAKS and cos >= X.TAU:
@@ -82,7 +87,9 @@ def main():
             vote_key = max(per, key=lambda k: (sum(per[k].values()), max(per[k].values())))
             rec.update(best_cos=round(best, 4), tie=len(tie), src=next(iter(tie.values()))[1],
                        public_rule_correct=first_key == key, truth_in_tie=key in tie,
-                       truth_anywhere=key in per, vote_correct=vote_key == key)
+                       truth_anywhere=key in per, vote_correct=vote_key == key,
+                       hit_smiles=next(iter(tie.values()))[0], truth_smiles=g["normalized_smiles"].iat[0],
+                       best_peaks=max(s[1] for s in scored if s[0] == best))
         out.append(rec)
     df = pd.DataFrame(out)
     df.to_csv(ROOT / a.out, index=False)

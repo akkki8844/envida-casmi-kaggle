@@ -603,6 +603,8 @@ if globals().get("_NNET_NOTEBOOK", False):
 
 # ---- envida wrapper -------------------------------------------------------------------------------
 ENVIDA_GUARD_H = 8.80  # never let this layer run past this session time
+ENVIDA_FORCE = False   # True: also run on a commit (smoke) run, to exercise the layer on Kaggle; the scoring rerun
+                       # is a full run either way
 
 
 def run_layer(work="/kaggle/working", inp="/kaggle/input", t0_session=None):
@@ -616,6 +618,7 @@ def run_layer(work="/kaggle/working", inp="/kaggle/input", t0_session=None):
         full = bool(info.get("is_full_run")) and info.get("processed_molecules") == info.get("output_molecules")
     except Exception:
         full = False
+    full = full or ENVIDA_FORCE
     cap = _NNET_CAP_S
     if t0_session is not None:
         cap = min(cap, ENVIDA_GUARD_H * 3600 - (_time.time() - t0_session) - 120)

@@ -18,6 +18,7 @@ ROOT = Path(__file__).resolve().parents[1]
 USER = "govindmulchandani"
 LAYER_DATASETS = {
     "extlib_overlay": ["taeyangg4/casmi26-extlib-gnps-full", "samartalwar/casmi-2026-spectral-library-massbankharmonized"],
+    "neighbour_network": [],  # reads the competition's train.parquet and test.parquet
 }
 
 
@@ -33,7 +34,8 @@ def layer_cell(name: str, config: dict | None = None) -> str:
         "sys.path.insert(0, '/tmp/envida_layers')\n"
         f"_envida_{name} = importlib.import_module('{name}')\n"
         + sets +
-        f"_envida_{name}_audit = _envida_{name}.run(t0_session=globals().get('NB_T0'))\n"
+        f"_envida_{name}_entry = getattr(_envida_{name}, 'run_layer', None) or _envida_{name}.run\n"
+        f"_envida_{name}_audit = _envida_{name}_entry(t0_session=globals().get('NB_T0'))\n"
         f"print('[envida] {name}:', {{k: v for k, v in (_envida_{name}_audit or {{}}).items() if k != 'decisions'}})\n"
     )
 
