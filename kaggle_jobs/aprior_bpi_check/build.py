@@ -19,7 +19,10 @@ from pathlib import Path
 try:
     import rdkit  # noqa
 except ImportError:
-    whl = sorted(glob.glob("/kaggle/input/**/rdkit*.whl", recursive=True))
+    tag = "cp%d%d" % sys.version_info[:2]
+    allw = sorted(glob.glob("/kaggle/input/**/rdkit*.whl", recursive=True))
+    print("rdkit wheels:", [os.path.basename(w) for w in allw], "need", tag, flush=True)
+    whl = [w for w in allw if "-" + tag + "-" in os.path.basename(w)]
     subprocess.run([sys.executable, "-m", "pip", "install", "--no-index", "--no-deps", whl[0]], check=True)
 import rdkit
 print("rdkit", rdkit.__version__, flush=True)
@@ -84,7 +87,9 @@ def main():
     meta = {"id": "govindmulchandani/envida-aprior-bpi-check", "title": "envida aprior bpi check", "code_file": "check_job.py",
             "language": "python", "kernel_type": "script", "is_private": True, "enable_gpu": False, "enable_internet": False,
             "dataset_sources": ["metric/rdkit-2026-3-3-wheel/1"], "kernel_sources": ["govindmulchandani/envida-casmi-v4"],
-            "competition_sources": ["enveda-CASMI26-molecule-id-mass-spectra"]}
+            "competition_sources": ["enveda-CASMI26-molecule-id-mass-spectra"],
+            # the g498 notebook's own pinned image (python 3.10, matches the rdkit wheel)
+            "docker_image": "gcr.io/kaggle-private-byod/python@sha256:37c64f7dd9c54116ecd1bcc88817c5469b88387388fade02bfa8bf3fc647d461"}
     (out / "kernel-metadata.json").write_text(json.dumps(meta, indent=2), encoding="utf8")
     print("built", out)
 
