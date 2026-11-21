@@ -1,0 +1,16 @@
+{
+  "id": "govindmulchandani/envida-dreams-embed",
+  "title": "envida dreams embed",
+  "code_file": "embed.py",
+  "language": "python",
+  "kernel_type": "script",
+  "is_private": true,
+  "enable_gpu": false,
+  "enable_internet": false,
+  "dataset_sources": [
+    "govindmulchandani/envida-dreams-queries",
+    "dmitriigluzdov/casmi26-attributed-v4g-reproduction-assets/9"
+  ],
+  "competition_sources": [],
+  "kernel_sources": []
+}
