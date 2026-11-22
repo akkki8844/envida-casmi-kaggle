@@ -135,7 +135,8 @@ def main():
         Path(a.out).write_text(src, encoding="utf8")
     else:
         nb["cells"][i]["source"] = src.splitlines(keepends=True)
-        Path(a.out).write_text(json.dumps(nb, indent=1), encoding="utf8")
+        # compact JSON: Kaggle refuses kernel sources of 1 MB or more
+        Path(a.out).write_text(json.dumps(nb, separators=(",", ":")), encoding="utf8")
     print(f"patched cell {i} with W={a.w} -> {a.out}")
 
 
